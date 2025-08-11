@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="fa">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>بازی ساده — گرفتن سیب</title>
+  <style>
+    html,body{height:100%;margin:0;font-family:Tahoma,Arial}
+    body{display:flex;align-items:center;justify-content:center;background:#f0f4f8}
+    canvas{background:linear-gradient(#bfe9ff,#87c8ff);box-shadow:0 8px 20px rgba(0,0,0,0.15);border-radius:8px}
+    .overlay{position:fixed;top:16px;left:16px;font-size:14px;color:#023047}
+    .hint{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);font-size:13px;color:#03396c}
+  </style>
+</head>
+<body>
+  <div class="overlay">امتیاز: <span id="score">0</span> — باخت: <span id="miss">0</span>/3</div>
+  <canvas id="game" width="640" height="420" role="img" aria-label="بازی گرفتن سیب"></canvas>
+  <div class="hint">از ← و → استفاده کن — فاصله (Space) برای شروع/ریست</div>
+
+<script>
+/*
+  بازی: گرفتن سیب
+  قوانین ساده:
+  - با بازیکن (پدل) حرکت کن و سیب‌ها را بگیر
+  - گرفتن = امتیاز +1
+  - افتادن سیب از پایین بدون گرفتن = افزایش باخت
+  - باخت = 3، بازی تمام می‌شود
+*/
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const W = canvas.width;
+const H = canvas.height;
+
+let scoreEl = document.getElementById('score');
+let missEl = document.getElementById('miss');
+
+let gameState = 'menu'; // 'menu' | 'playing' | 'over'
+let score = 0;
+let misses = 0;
+
+// بازیکن (پدل)
+const player = {
+  w: 110,
+  h: 16,
+  x: (W - 110) / 2,
+  y: H - 34,
+  speed: 6,
+  vx: 0
+};
+
+// آیتم‌هایی که می‌افتن (سیب)
+let items = [];
+let spawnTimer = 0;
+const spawnInterval = 700; // میلی‌ثانیه
+
+let lastTs = 0;
+
+// کنترل‌ها
+const keys = { left:false, right:false };
+
+// رویدادهای کلید
+window.addEventListener('keydown', e=>{
+  if (e.key === 'ArrowLeft') keys.left = true;
+  if (e.key === 'ArrowRight') keys.right = true;
+  if (e.key === ' ' || e.code === 'Space') {
+    if (gameState === 'menu' || gameState === 'over') startGame();
+  }
+});
+window.addEventListener('keyup', e=>{
+  if (e.key === 'ArrowLeft') keys.left = false;
+  if (e.key === 'ArrowRight') keys.right = false;
+});
+
+// شروع یا ریست بازی
+function startGame() {
+  score = 0;
+  misses = 0;
+  items = [];
+  spawnTimer = 0;
+  gameState = 'playing';
+  scoreEl.textContent = score;
+  missEl.textContent = misses;
+  lastTs = performance.now();
+  requestAnimationFrame(loop);
+}
+
+// ساخت آیتم جدید (سیب)
+function spawnItem() {
+  const size = Math.random() * 18 + 18; // 18..36
+  const x = Math.random() * (W - size - 20) + 10;
+  const speed = Math.random() * 1.6 + 1.2; // سرعت پایه
+  items.push({
+    x, y: -size,
+    w: size, h: size,
+    vy: speed,
+    type: 'apple' // می‌شه انواع افزود
+  });
+}
+
+// برخورد مربع-مربع ساده
+function collides(a,b){
+  return !(a.x + a.w < b.x || a.x > b.x + b.w || a.y + a.h < b.y || a.y > b.y + b.h);
+}
+
+function update(dt) {
+  if (gameState !== 'playing') return;
+
+  // حرکت بازیکن
+  player.vx = 0;
+  if (keys.left) player.vx = -player.speed;
+  if (keys.right) player.vx = player.speed;
+  player.x += player.vx;
+  if (player.x < 8) player.x = 8;
+  if (player.x + player.w > W - 8) player.x = W - 8 - player.w;
+
+  // اسپاون آیتم
+  spawnTimer += dt;
+  if (spawnTimer >= spawnInterval) {
+    spawnTimer = 0;
+    spawnItem();
+  }
+
+  // بروزرسانی آیتم‌ها
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    // شتاب جاذبه کوچک برای افزایش دشواری
+    it.vy += 0.02 * (dt/16);
+    it.y += it.vy * (dt/16);
+
+    // برخورد با بازیکن؟
+    const boxItem = {x: it.x, y: it.y, w: it.w, h: it.h};
+    const boxPlayer = {x: player.x, y: player.y, w: player.w, h: player.h};
+    if (collides(boxItem, boxPlayer)) {
+      score += 1;
+      scoreEl.textContent = score;
+      // افکت: اضافه کردن یه ذره به اندازه برای تنوع
+      // حذف آیتم
+      items.splice(i,1);
+      continue;
+    }
+
+    // اگر از پایین خارج شد = miss
+    if (it.y > H + 40) {
+      misses += 1;
+      missEl.textContent = misses;
+      items.splice(i,1);
+      if (misses >= 3) {
+        gameState = 'over';
+      }
+    }
+  }
+}
+
+function drawRoundedRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// نقاشی اصلی
+function render() {
+  // پس‌زمینه با گرادیانت
+  ctx.clearRect(0,0,W,H);
+
+  // آسمون و ابر ساده
+  // ground
+  ctx.fillStyle = '#e6f2ff';
+  drawRoundedRect(0, H-70, W, 70, 0);
+
+  // درخت‌ها/تپه‌های ساده
+  for (let i=0;i<6;i++){
+    const tx = (i*140 + 40) % (W+200) - 100;
+    ctx.fillStyle = '#c6e3b6';
+    ctx.beginPath();
+    ctx.ellipse(tx+40, H-70, 80, 34, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // بازیکن
+  ctx.fillStyle = '#023047';
+  drawRoundedRect(player.x, player.y, player.w, player.h, 8);
+
+  // آیتم‌ها (سیب)
+  for (const it of items) {
+    // بدنه
+    ctx.save();
+    ctx.translate(it.x + it.w/2, it.y + it.h/2);
+    // سایه
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    ctx.beginPath();
+    ctx.ellipse(-2, it.h/2 + 8, it.w*0.5, 6, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // خود سیب (دایره قرمز)
+    ctx.fillStyle = '#e63946';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, it.w*0.5, it.h*0.5, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // برگ
+    ctx.fillStyle = '#2a9d8f';
+    ctx.beginPath();
+    ctx.ellipse(8, -it.h*0.35, it.w*0.15, it.h*0.12, -0.6, 0, Math.PI*2);
+    ctx.fill();
+
+    // درخشندگی
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(-it.w*0.15, -it.h*0.25, it.w*0.12, it.h*0.18, 0.3, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // متن وضعیت در وسط در حالت منو یا باخت
+  if (gameState === 'menu') {
+    ctx.fillStyle = 'rgba(2,48,71,0.95)';
+    ctx.font = 'bold 28px Tahoma, Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('بازی گرفتن سیب', W/2, H/2 - 20);
+    ctx.font = '16px Tahoma, Arial';
+    ctx.fillText('با ← و → حرکت کن — فاصله (Space) برای شروع', W/2, H/2 + 8);
+  } else if (gameState === 'over') {
+    ctx.fillStyle = 'rgba(160,30,30,0.95)';
+    ctx.font = 'bold 34px Tahoma, Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('بازی تمام شد', W/2, H/2 - 12);
+    ctx.font = '18px Tahoma, Arial';
+    ctx.fillStyle = '#023047';
+    ctx.fillText('امتیاز: ' + score, W/2, H/2 + 18);
+    ctx.fillText('فشار Space برای بازی مجدد', W/2, H/2 + 48);
+  }
+}
+
+// حلقه بازی
+function loop(ts) {
+  const dt = Math.min(40, ts - lastTs); // محدود کردن dt برای ثبات
+  lastTs = ts;
+
+  update(dt);
+  render();
+
+  if (gameState === 'playing') {
+    requestAnimationFrame(loop);
+  }
+}
+
+// شروع در حالت منو
+gameState = 'menu';
+render();
+
+</script>
+</body>
+</html>
